@@ -1,479 +1,683 @@
-#define _XOPEN_SOURCE 500  // Required for FTW_DEPTH on some systems
 #include <stdio.h>
-#include <stdlib.h> 
-#include<string.h>
+#include <sys/types.h>
+#include <stdlib.h>
+#include <sys/wait.h>
+#include <string.h>
 #include <unistd.h>
-#include<fcntl.h>
-#include<sys/stat.h>
-#include<sys/signal.h>
-#include <ctype.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <sys/signal.h> 
 
-const char *process_id=NULL;  
-const char *root_process=NULL;
-const char *option=NULL;
-int found=0;
-int hasnondirectDescendatants=0;
-int hasGrandChildren=0;
-int defunctChilds=0;
-
-
-long getFileSize(const char *filename) { //it will return file size of given file 
-    struct stat st;
-    if (stat(filename, &st) == 0) {
-        return st.st_size;
-    } else {
-        perror("Error getting file size");
-        return -1;
-    }
-}
+char allCommands[7][5][50];
+int numberOfCommands;
+int numberOfArguments[7];
+int doubleArrow;
+char andOrSequence[5][4];
+int numberOfConditions;
+int maxNumberOfCommands;
+int expectedNumberOfCommands;
+int moreNumOfArguments;
+int onlyspace=0;
+int condition[6];
+int backgroundprocessIds[50];
+int currentId=-1;
+int child_pid;
+char *root_dir;
 
 
-int isValidNumber(char *str) {  // if will return whether passed string is valid number of not
-    int i;
-    const int len = strlen(str);
 
-    for (i = 0; i < len; i++)
-    {
-        if (!isdigit(str[i])) 
-        {
-            return 0;
-        }
-    }
-    return 1;
-}
-void nonDirectDescendants(const char* parent_id,int level)  // it will print non direct descendants of parent
+int checktoken(char* token)  // returns 1 if token contains other than space, else 0
 {
-    level++;
-    char command[50];
-    snprintf(command, sizeof(command), "cat /proc/%s/task/%s/children", parent_id, parent_id); // it will create the command and store it in command variable
-    char* childProcessIds=malloc(128);  // it will create the space of the pointer
-    FILE *fp = popen(command, "r");  // it will execute the command and store the output in a file and return the filepointer
-    fgets(childProcessIds, 128, fp ); // it will read the content of file and store it in chilProcessIds buffer
-    char *saveptr1;
-    char *child_process_id = strtok_r(childProcessIds, " ",&saveptr1); // it will tokenize the buffer using demiliter as space
-    while(child_process_id != NULL && isValidNumber(child_process_id)==1) // iterate for each child id
+    for(int i=0;i<strlen(token);i++) // iterates for every character in string
     {
-        if(level>1)  // if level ==1 then it is direct child and leven ==2 is grand child . to print non direct descandants I used level > 1
+        if(token[i]!= ' ')  //if character is other than space
         {
-            hasnondirectDescendatants=1; // it acts as a flag
-            printf("%s\n",child_process_id); //prints the child id
+            return 1;
         }
-        nonDirectDescendants(child_process_id,level);  // it recursively call the function to iterate for every child in the root proces tree
-        if ((child_process_id = strtok_r(NULL," ",&saveptr1)) == NULL ) {  // it take the next token as child id
+    }
+    return 0;
+}
+
+void storecommand(char* command,int i) // stores the command in allCommands array
+{
+    char *token;
+    token = strtok(command, " ");  // tokenization based on space 
+    int argumentCount=0;
+    while (token != NULL) {
+        
+        if(argumentCount>=5) //if argument count > 5 then it returns to print an error
+        {
+            moreNumOfArguments=1; // sets the flag
             return;
         }
-    }
-}
-
-void siblingIds(const char *parent_id,const char *child_id)  // prints the siblings of process id( child id)
-{
-    char command[50];
-    int hasSibling=0;
-    snprintf(command, sizeof(command), "cat /proc/%s/task/%s/children", parent_id, parent_id); // it will create the command and store it in command variable
-    char childProcessIds[128]; // it will create the space of the pointer
-    FILE *fp = popen(command, "r"); // it will execute the command and store the output in a file and return the filepointer
-    fgets(childProcessIds, sizeof(childProcessIds), fp );  // it will read the content of file and store it in chilProcessIds buffer
-    char *child_process_id = strtok(childProcessIds, " "); // it will tokenize the buffer using demiliter as space
-    while(child_process_id != NULL && isValidNumber(child_process_id)==1) // iterate for each child id
-    {
-        if(strcmp(child_process_id,child_id)!=0) // it will compare each child id with pass process id and prints if both are not equal
-        {
-            hasSibling=1; // it acts as a flag
-            printf("%s\n",child_process_id); //prints the siblingid
-        }
-        if ((child_process_id = strtok(NULL, " ")) == NULL) { // it take the next token as child id
-                break;
-        }
         
-    }
-    if(hasSibling==0)  //if process id has no siblings prints no siblings
-    {
-        printf("No sibling/s\n");
-    }
-}
-
-void immediateDescendants(const char *parent_id)  // prints the immediate descendants of the process id
-{
-    char command[50];
-    snprintf(command, sizeof(command), "cat /proc/%s/task/%s/children", parent_id, parent_id); // it will create the command and store it in command variable
-    char childProcessIds[128]; // it will create the space of the pointer
-    FILE *fp = popen(command, "r"); // it will execute the command and store the output in a file and return the filepointer
-    fgets(childProcessIds, sizeof(childProcessIds), fp ); // it will read the content of file and store it in chilProcessIds buffer
-    char *child_process_id = strtok(childProcessIds, " ");  // it will tokenize the buffer using demiliter as space
-    if(isValidNumber(child_process_id)==0)
-    {
-        printf("No direct Descendants\n");
-        return;
-    }
-    while(child_process_id != NULL && isValidNumber(child_process_id)==1)
-    {
-        printf("%s\n",child_process_id);
-        if ((child_process_id = strtok(NULL, " ")) == NULL) {
-            break;
-        }
-    }
-}
-
-void grandChildren(const char* parent_id,int level)
-{
-    level++;
-    if(level>2)
-    {
-        return;
-    }
-    char command[50];
-    snprintf(command, sizeof(command), "cat /proc/%s/task/%s/children", parent_id, parent_id); // it will create the command and store it in command variable
-    //printf("command= %s\n",command);
-    char *childProcessIds=malloc(128); // it will create the space of the pointer
-    FILE *fp = popen(command, "r"); // it will execute the command and store the output in a file and return the filepointer
-     if (fp == NULL) {
-        perror("Error opening file");
-        return;
-    }
-    fgets(childProcessIds, 128, fp ); // it will read the content of file and store it in chilProcessIds buffer
-    //printf("Descendants immediate child of parent id = %s is child ids = %s\n",parent_id,childProcessIds);
-    char *saveptr1;
-    char *child_process_id = strtok_r(childProcessIds, " ",&saveptr1);    // it will tokenize the buffer using demiliter as space
-    if(child_process_id==NULL || (parent_id,child_process_id)==0)
-    {
-        return;
-    }
-    while(child_process_id != NULL && isValidNumber(child_process_id)==1)
-    {
-        if(level==2)
+        if(strstr(token,"~")!=NULL)  // if the token contains ~ symbol, if changes into home directory
         {
-            hasGrandChildren=1;
-            printf("%s\n",child_process_id);
-        }
-        
-        grandChildren(child_process_id,level);
-        if ((child_process_id = strtok_r(NULL," ",&saveptr1)) == NULL ) {
-            return;
-        }
-    }
-}
-
-void killprocessid(const char* child_id)
-{
-    int i=kill(atoi(child_id),SIGKILL);
-    if(i==0)
-    {
-        printf("kill signal is sent to process id %s successfully\n",child_id);
-    }
-    else{
-        printf("error in sending a kill signal to %s id\n",child_id);
-    }
-}
-
-
-int isDefunctProcessId(const char* child_id)
-{
-    char command[100];
-    snprintf(command, sizeof(command), "cat /proc/%s/status | grep State | awk '{print $2}'", child_id); // it will create the command and store it in command variable
-    int len=strlen(child_id);
-    char file[128];
-    FILE *fp = popen(command, "r"); // it will execute the command and store the output in a file and return the filepointer
-    fgets(file,2, fp );
-    //printf("file = %s\n",file);
-    if(strcmp(file,"Z")==0)
-    {
-        return 1;
-    }
-    else{
-        return 0;
-    }
-}
-
-void defunctChildIds(const char *parent_id)
-{
-    char command[50];
-    int i=0;
-    snprintf(command, sizeof(command), "cat /proc/%s/task/%s/children", parent_id, parent_id); // it will create the command and store it in command variable
-    char childProcessIds[128]; // it will create the space of the pointer
-    FILE *fp = popen(command, "r"); // it will execute the command and store the output in a file and return the filepointer
-    fgets(childProcessIds, sizeof(childProcessIds), fp ); // it will read the content of file and store it in chilProcessIds buffer
-    //printf("child of parent id = %s is child ids = %s\n",parent_id,childProcessIds);
-    char *saveptr1;
-    char *child_process_id = strtok_r(childProcessIds, " ",&saveptr1);  // it will tokenize the buffer using demiliter as space
-    if(child_process_id==NULL || (parent_id,child_process_id)==0)
-    {
-        return;
-    }
-    while(child_process_id!= NULL && isValidNumber(child_process_id)==1) {
-        i=isDefunctProcessId(child_process_id);
-        if(i==1)
-        {
-            defunctChilds=1;
-            printf("%s\n",child_process_id);
-        }
-        else{
-            defunctChildIds(child_process_id);
-        }
-        if ((child_process_id = strtok_r(NULL," ",&saveptr1)) == NULL) {
-            break;
-        }
-    }
-}
-
-
-
-
-int childExists(const char* child_id)
-{
-    int fd1=open("temp.txt",O_RDONLY);
-    char buff[50];
-    long n=read(fd1,buff,getFileSize("temp.txt"));
-    char* id=strtok(buff," ");
-    while(id!=NULL)
-    {
-        if(strcmp(id,child_id)==0)
-        {
-            return 0;
-        }
-        if ((id= strtok(NULL, " ")) == NULL) {
-                break;
-        }
-    }
-    return -1;
-}
-
-
-
-void storeInFile(const char* child_id) // stores the id in the file
-{
-    int fd1=open("temp.txt",O_CREAT|O_RDWR|O_APPEND,0777);
-    long n=write(fd1,child_id,strlen(child_id));
-    n=write(fd1," ",1);
-    close(fd1);
-}
-int fileExists(const char* file) //checks whether file exists or not
-{
-    int fd1=open("temp.txt",O_RDONLY);
-    return fd1;
-}
-
-int pauseProcess(const char* child_id)  // stop the process
-{
-    int i=kill(atoi(child_id),SIGSTOP); // sends SIGSTOP signal to child id 
-    if(i==0)
-    {
-        printf("SIGSTOP signal is sent to %s process successfully\n",child_id);
-        if(fileExists("temp.txt")>0 && childExists(child_id)!=0) // if child id doesn't exist in file then it stores the id in the file
-        {
-            storeInFile(child_id);
-        } 
-        else if(fileExists("temp.txt")<0) // if file doesn't exist  then it  creates and stores the id in the file
-        {
-            storeInFile(child_id);
-        }
-    }
-    else{
-        printf("error in stopping %s process \n",child_id);
-    }
-}
-
-int isValidProcess(const char *process_id) //returns process is valid or not
-{
-    if (kill(atoi(process_id), 0) == 0) {
-        return 1;
-    } else {
-        return 0;
-    }
-}
-
-void continueAllProcesses()
-{
-    if(fileExists("temp.txt")<0) //if files doesn't exist then prints error
-    {
-        printf("No processes are paused previously by SIGSTOP\n");
-        return;
-    }
-    int fd1=open("temp.txt",O_RDONLY); //open the file
-    long len=getFileSize("temp.txt");
-    char buff[len];
-    long n=read(fd1,buff,len); //read the content of the file
-    buff[len-1]='\0';
-    //printf("buff= %s\n",buff);
-    char* id=strtok(buff," "); // tokenize the string to iterate each child
-    while(id!=NULL)
-    {
-        int i=kill(atoi(id),SIGCONT); // sends SIGCONT signal to each child id
-        if(i==0)  //if successful prints success or error
-        {
-            printf("%s process resumed successfully\n",id);
-        }
-        else{ 
-            printf("error in resuming %s process or process doesn't exist \n",id);
-        }
-        if ((id= strtok(NULL, " ")) == NULL) { //takes next child id
-                break;
-        }
-    }
-    remove("temp.txt");
-}
-
-
-
-void options(const char *parent_id,const char *child_id)
-{
-    if(strcmp(option,"-xn")==0)  //if option is -xn calls nonDirectDescendants function
-    {
-        nonDirectDescendants(child_id,0);
-        if(hasnondirectDescendatants==0)
-        {
-            printf("No non-direct descendants\n");
-        }
-    }
-    else if(strcmp(option,"-xd")==0) //if option is -xd calls immediateDescendants function
-    {
-        immediateDescendants(child_id);
-    }
-    else if(strcmp(option,"-xs")==0)  //if option is -xs calls siblingIds function
-    {
-        siblingIds(parent_id,child_id);
-    } 
-    else if(strcmp(option,"-xg")==0) //if option is -xg calls grandChildren function
-    {
-        grandChildren(child_id,0);
-        if(hasGrandChildren==0)
-        {
-            printf("No grand children\n");
-        }
-    }
-    else if(strcmp(option,"-rp")==0)  //if option is -rp calls killprocessid function
-    {
-        killprocessid(child_id);
-    }
-    else if(strcmp(option,"-zs")==0) //if option is -zs calls isDefunctProcessId function
-    {
-        int i=isDefunctProcessId(child_id);
-        if(i==1)
-        {
-            printf("Defunct\n");
-        }
-        else{
-            printf("Not Defunct\n");
-        }
-    }
-    else if(strcmp(option,"-xz")==0) //if option is -xz calls defunctChildIds function
-    {
-        defunctChildIds(child_id);
-        if(defunctChilds==0)
-        {
-            printf("No descendant zombie process/es \n");
-        }
-    }
-    else if(strcmp(option,"-xt")==0)  //if option is -xt calls pauseProcess function
-    {
-        pauseProcess(child_id);
-    }
-    else if(strcmp(option,"-xc")==0)  //if option is -xc calls continueAllProcesses function
-    {
-        continueAllProcesses();
-    }
-    else{
-        printf("enter valid option as argument\n");
-    }
-}
-
-
-
-void search(const char *parent_id,const char *child_id)
-{
-    
-    char command[50];
-    snprintf(command, sizeof(command), "cat /proc/%s/task/%s/children", parent_id, parent_id); // it will create the command and store it in command variable
-    char childProcessIds[128]; // it will create the space of the pointer
-    FILE *fp = popen(command, "r"); // it will execute the command and store the output in a file and return the filepointer
-    
-    fgets(childProcessIds, sizeof(childProcessIds), fp ); // it will read the content of file and store it in chilProcessIds buffer
-    char *saveptr1;
-    char *child_process_id = strtok_r(childProcessIds, " ",&saveptr1);  // it will tokenize the buffer using demiliter as space
-    while(child_process_id != NULL && isValidNumber(child_process_id)==1) { 
-        if(strcmp(child_process_id,child_id)==0)  //if child id and process id are same then it will print child id and parent id or calls options function
-        { 
-            found=1;
-            if(option==NULL)
-                printf("%s %s\n",child_process_id,parent_id);
-            
-            else
+            if(token[0]=='~')
             {
-                options(parent_id,child_id); // if option is not null .. calls options function
+                token++; //removing the ~ symbol
+                char *token1=malloc(50);
+                strcpy(token1,root_dir); //root directory contains home directory path
+                strcat(token1,token);  //adding the token to home directory path
+                strcpy(allCommands[i][argumentCount],token1); // storing the command in allCommands array
             }
-            return;
         }
-        search(child_process_id,child_id);// recursively calls the fucnton
-        if(found==1)
+        else
         {
-            return;
+            strcpy(allCommands[i][argumentCount],token); // storing the command in allCommands array
+            
         }
-        if ((child_process_id = strtok_r(NULL, " ",&saveptr1)) == NULL) {
-            break;
-        }
+        argumentCount++; // increasing the argument count
+        token = strtok(NULL, " "); // taking next token
     }
-    
+    numberOfArguments[i]=argumentCount; // storing arguments counts for specified command
 }
 
 
 
-int main(int argc, char *argv[]){
-    if(argc==2)   // if number of arguments are 2 then it should be -xc or asks for valid arguments
-    {
-        option=argv[1];
-        if(strcmp(option,"-xc")==0)
+void tokenizecommands(char *a,char* delim)
+{
+    char *token;
+    numberOfCommands=0;
+    char *saveptr;
+    token = strtok_r(a, delim, &saveptr);  // tokenizing the string based on delimiter
+    while (token != NULL) { 
+        if(checktoken(token)==0) //if token contains only spaces then returns
         {
-            continueAllProcesses();
+            onlyspace=1; // turning onlyspace flag on
+            return; // return
         }
-        else{
-            printf("pass valid argument/s\n");
+        storecommand(token,numberOfCommands); //storing the command
+        if(moreNumOfArguments==1) // if moreNumOfArguments flag is set then token contains more arguments so it is an error
+        {
+            return;
         }
-        return 0;
+        numberOfCommands++; // incrementing numberOfCommands
+        token = strtok_r(NULL, delim,&saveptr); // next token
+       
     }
-    else if(argc==3) //if number of args is 3 then command without options or -pr option
-    {
-        if(strstr(argv[2],"-")) //checks for - , if - presents then it is -pr or else without options
+}
+
+void tokenize_double_or(char *a) // tokenizing the string based on ||
+{
+    char *token;
+    char *saveptr;
+    token = strtok_r(a, "||", &saveptr); // tokenizing the string based on delimiter
+    while (token != NULL) {
+        if(checktoken(token)==0) // if token contains only space then it returns
         {
-            root_process=argv[1]; // loads arg1 into root process
-            option=argv[2]; // loads arg2 into root option
-            if (isValidProcess(root_process)) { //checks whether root process is valid or not
-                if(strcmp(option,"-pr")==0) // checks for the option is -pr or not
-                    killprocessid(root_process); // kills the root process
-                else{
-                    printf("enter valid arguments\n");
-                }
-            } 
-            else{
-                printf("root process doesn't exist\n");
+            onlyspace=1;  // onlyspace flag is set
+            return;  //returns because it is an error
+        }
+        storecommand(token,numberOfCommands); //storing the command
+        numberOfCommands++;  //incrementing the numberOfCommands
+        token = strtok_r(NULL, "||",&saveptr);  // next token
+        if(token!=NULL)
+        {
+            condition[numberOfConditions]=0; // storing the condition 1 for && and 0 for ||
+            numberOfConditions++;  // incrementing numberOfConditions
+        }
+    }
+}
+
+
+void tokenize_double_and(char *a,char* delim) // tokenizing the string based on &&
+{
+    char *token;
+    numberOfCommands=0; 
+    numberOfConditions=0;
+    char *saveptr;
+    token = strtok_r(a, delim, &saveptr);  // tokenizing the string based on delimiter
+    while (token != NULL) {
+        if(strstr(token,"||")!=NULL) // if the token contains || then token is tokenized based on || 
+        {
+            tokenize_double_or(token); // calling tokenize_double_or function
+            if(onlyspace==1) // if token contains only space then it returns
+            {
+                return;
             }
-            return 0;
         }
-        else{
-            process_id=argv[1]; // loads arg1 into process id
-            root_process=argv[2]; // loads arg2 into root process
+        else
+        {
+            if(checktoken(token)==0) // if token contains only space then it returns
+            {
+                onlyspace=1; // onlyspace flag is set
+                return; //returns because it is an error
+            }
+            storecommand(token,numberOfCommands);  //storing the command
+            numberOfCommands++;    //incrementing the numberOfCommands
+        }
+        token = strtok_r(NULL, delim,&saveptr); // next token
+        if(token!=NULL)
+        {
+            condition[numberOfConditions]=1; // storing the condition 1 for && and 0 for ||
+            numberOfConditions++; // incrementing numberOfConditions
+        }
+        
+    }
+}
+
+void execute_single_command(int i) { // executing single command
+   
+    char *args[numberOfArguments[i] + 1];  //creating args char array
+    for (int j = 0; j < numberOfArguments[i] && allCommands[i][j][0] != '\0'; j++) {
+        args[j] = allCommands[i][j]; // loading arguments into args
+    }
+    args[numberOfArguments[i]] = NULL;  // storing null in last argument
+    if(execvp(args[0], args)==-1)  // exectuing the command
+    {
+        perror("execvp");
+        exit(1);
+    }
+}
+
+void execute_all_commands() {    // executing pipe command
+    int fd[numberOfCommands - 1][2]; // File descriptors for pipes
+
+    for (int i = 0; i < numberOfCommands; i++) {
+        if (i < numberOfCommands - 1 && pipe(fd[i]) == -1) {  //creating pipe for every iteration
+            perror("pipe");
+            exit(1);
+        }
+
+        pid_t pid = fork();  // creating child process
+        if (pid == -1) {
+            perror("fork");
+            exit(1);
+        }
+
+        if (pid == 0) { // Child process
+            // Redirect input/output for the first command
+            if (i == 0) {
+                close(fd[0][0]); // Close read end of the first pipe
+                dup2(fd[0][1], STDOUT_FILENO); // Redirect stdout to the write end of the first pipe
+                close(fd[0][1]); // Close the write end of the first pipe
+                execute_single_command(i); // executing the first command
+            }
+            // Redirect input/output for the last command
+            else if (i == numberOfCommands - 1) {
+                close(fd[i - 1][1]); // Close write end of the previous pipe
+                dup2(fd[i - 1][0], STDIN_FILENO); // Redirect stdin to the read end of the previous pipe
+                close(fd[i - 1][0]); // Close read end of the previous pipe
+                execute_single_command(i); // executing the commands which are not first and last
+            }
+            // Redirect input/output for intermediate commands
+            else {
+                close(fd[i - 1][1]); // Close write end of the previous pipe
+                dup2(fd[i - 1][0], STDIN_FILENO); // Redirect stdin to the read end of the previous pipe
+                close(fd[i - 1][0]); // Close read end of the previous pipe
+                close(fd[i][0]); // Close read end of the current pipe
+                dup2(fd[i][1], STDOUT_FILENO); // Redirect stdout to the write end of the current pipe
+                close(fd[i][1]); // Close the write end of the current pipe
+                execute_single_command(i); // executing the last command
+            }
+        } else { // Parent process
+            if (i > 0) {
+                close(fd[i - 1][0]); // Close read end of the previous pipe
+                close(fd[i - 1][1]); // Close write end of the previous pipe
+            }
         }
     }
-    else if(argc==4)
+
+    // Close any remaining pipe file descriptors in the parent process
+    for (int i = 0; i < numberOfCommands - 1; i++) {
+        close(fd[i][0]);
+        close(fd[i][1]);
+    }
+
+    // Wait for all child processes to finish
+    for (int i = 0; i < numberOfCommands; i++) {
+        wait(NULL);
+    }
+}
+
+
+void execute_concat()  // executing concatenation
+{
+    char *args[numberOfCommands + 2];  // creating args char array
+    args[0] = "cat"; // storing cat as first argument
+    for(int i = 0; i <= numberOfCommands && allCommands[i][0][0] != '\0'; i++) {
+        args[i+1] = allCommands[i][0];   // loading arguments into args
+    }
+    args[numberOfCommands+1] = NULL;  // storing null as last argument
+    if(fork()==0)  // creating child process
     {
-        process_id=argv[1];   // loads arg1 into process id
-        root_process=argv[2]; // loads arg2 into root process
-        if (!isValidProcess(root_process)) {
-            printf("root process doesn't exist\n");
-            return 0;
-        } 
-        option=argv[3]; // loads arg3 into option
+        execvp(args[0], args); //executing the cat command
+        perror("execvp");
+    }
+    else{
+         wait(NULL);
+    }
+}
+
+void execute_arrows() // executing >> and > options
+{
+    char *args[numberOfArguments[0] + 1];   // creating args char array
+    for (int j = 0; j < numberOfArguments[0] && allCommands[0][j][0] != '\0'; j++) {
+        args[j] = allCommands[0][j]; // loading arguments into args
+    }
+   
+    args[numberOfArguments[0]] = NULL;  // storing null as last argument
+    char* filename=allCommands[1][0];  // storing filename from allCommands
+    if(strstr(filename,".")==NULL)
+    {
+        printf("error in filename \n");
+        return;
+    }
+    int fd;
+
+    if(doubleArrow==1) //if special character is >>
+    {
+        fd=open(filename,O_CREAT | O_APPEND | O_WRONLY, 0777);  //creating a file with O_APPEND option
+    }
+    else //if special character is >>
+    {
+        remove(filename); // removing file if exists 
+        fd=open(filename,O_CREAT | O_WRONLY, 0777); //creating a file with O_WRONLY option
+    }
+
+    if(fork()==0) // creating child process
+    {
+        dup2(fd,STDOUT_FILENO);  // redirecting standard output to file created
+        close(fd); // closing fd
+        execvp(args[0], args); //executing the command and output will be stored in the file
+        perror("execvp");
+    }
+    else{
+         wait(NULL); // waits for the child process to complete
+    }
+    close(fd); //closing fd
+}
+
+
+void execute_reversearrow()   //executing the special character <
+{
+    char *args[numberOfArguments[0] + 1];   // creating args char array
+    for (int j = 0; j < numberOfArguments[0] && allCommands[0][j][0] != '\0'; j++) {
+        args[j] = allCommands[0][j]; // loading arguments into args
+    }
+   
+    args[numberOfArguments[0]] = NULL;  // storing null as last argument
+    char* filename=allCommands[1][0]; // storing file name
+    int fd=open(filename,O_RDONLY);  // opening file name in read only mode
+    if(fd==-1) // if file doesn't exist
+    {
+        printf("file name doesn't exist\n");
+        return;
+    }
+
+   
+    
+    if(fork()==0) // creating child process
+    {
+        dup2(fd,STDIN_FILENO); //redirecting the standard input from the file
+        close(fd); //closing fd
+        execvp(args[0], args);  // executing the command
+        perror("execvp");
+    }
+    else{
+         wait(NULL); // waits for the child process to complete
+         allCommands[0][0][0]='\0'; //removing the data in allCommands
+         allCommands[1][0][0]='\0'; //removing the data in allCommands
+    }
+    close(fd);
+}
+
+
+void execute_conditions()  // executing the conditional special characters && and || 
+{
+    int isSuccess=0;
+    for (int i = 0; i < numberOfCommands; i++) 
+    {
+        pid_t pid = fork();  // creates the process
+        if (pid == -1) {
+            perror("fork");
+            exit(1);
+        }
+        else if(pid==0)
+        {
+            execute_single_command(i);  //executes the command
+        }
+        else
+        {
+            int status;
+            int k=wait(&status);  // waits for the child
+            if (WIFEXITED(status))
+            {
+                if( WEXITSTATUS(status)==0)  //if command is executed successfully
+                {
+                    isSuccess=1;  //isSuccess flag is set to 1
+                }
+                else{
+                    isSuccess=0; //if command execution is failed then isSuccess flag is set to 0
+                }
+            }
+
+            while(i<numberOfConditions)
+            {
+                if(condition[i]==1 && isSuccess==0) //if condition is && and command is failed
+                {
+                    i++; //skipping next command
+                }
+                else if(condition[i]==0 && isSuccess==1) //if condition is || and command is successfull
+                {
+                    i++; //skipping next command
+                }
+                else
+                {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+void execute_sequential() {
+   
+
+   for(int i=0;i<numberOfCommands;i++) //iterating loop for every command
+   {
+        if(fork()==0)  //creating child process
+        { 
+            execute_single_command(i);  //executing the command
+        }
+        else
+        {
+            wait(NULL);  //waiting for the child
+        }     
+   }
+    
+}
+
+int checkerrorincommands()  // check if there is any error in the commands
+{
+    // if any of the following conditions are passsed then it will print an error
+    //if any of the command contains only space it will get an error
+    if(onlyspace==1 || numberOfCommands!=expectedNumberOfCommands || maxNumberOfCommands<numberOfCommands || moreNumOfArguments==1)
+    {
+        onlyspace=0;
+        moreNumOfArguments=0;
+        printf("please enter 1 to 5 number of arguments in each command (or) this code doesn't handle more than %d commands \n",maxNumberOfCommands);
+        return 1;
+    }
+    return 0;
+}
+
+int count_characters(char *str,char delim)  //counts number of characters or delimiters in the string
+{  
+    int count = 0;
+    for (int i = 0; i<strlen(str); i++) {
+        if (str[i] == delim) {  // if current character is delimiter than it increments the count
+            count++;
+        }
+    }
+    return count; //returns the count
+}
+
+int count_and_and(const char *str) { //counts number of && and || symbols in the string
+    int count = 0;
+    for (int i = 0; str[i] != '\0'; i++) {
+        if (str[i] == '&' && str[i + 1] == '&') {
+            count++;// Skip the second '&' to avoid double counting
+            
+            i++;
+        }
+        else if(str[i] == '|' && str[i + 1] == '|')
+        {
+            count++;// Skip the second '|' to avoid double counting
+            i++;
+        }
+    }
+    return count; //returns the count
+}
+
+
+void execute_newt(char* a)
+{
+    char b[strlen(a)];
+    int j=0;
+    for(int i=0;i<strlen(a);i++)  // trimming the command
+    {
+       if(a[i]!=' ')  //ignores the spaces before the command
+        {
+            b[j]=a[i];
+            j++;
+        }
+    }
+    b[j]='\0';
+    if(strcmp(b,"newt")==0)  //if command is newt
+    {
+        int pid = fork();
+	    if(pid == 0) {
+		//execlp("xterm", "xterm", "-e", "./sample",  NULL);
+        execlp("x-terminal-emulator", "x-terminal-emulator", "-e", "./shell24", NULL);  // it will create new terminal and executes this program in it
+	    }
     }
     else
     {
-        printf("enter valid number of arguments\n"); 
+        printf("enter command \"newt\" if you want to open new terminal\n");
     }
+}
 
-    search(root_process,process_id);  //calls search function to search for the process id in root process tree
 
-    if(found==0) //if process tree doesn't found prints error msg
+
+void execute_background(char* a)
+{
+    a[strlen(a)-1]='\0'; //removes the & character at the end
+    if(strstr(a,"&")!=NULL)
     {
-        printf("Does not belong to the process tree\n");
+        printf("error \n");
     }
-    
-    return 0;
-    
+    else
+    {
+        storecommand(a,0); //stores the command 
+        numberOfCommands=1;
+        pid_t pid = fork(); //creates the process
+        if (pid == -1) {
+            perror("fork");
+            exit(1);
+        }
+        else if(pid==0)
+        {
+            setpgid(0, 0);  // changes the pgid so that process executes in the background
+            execute_single_command(0);  //executes the command
+        }
+        else
+        {
+            printf("pushing process id - %d to background \n",pid);
+            currentId++;  // increments the currentId
+            backgroundprocessIds[currentId]=pid; // stores the child pid into the array
+        }
+    }
+}
+
+
+void handlerinput(int signo)
+{ 
+    if ( tcsetpgrp(0, getpid()) == -1) {  // brings the process id into the foregorund
+        perror("tcsetpgrp");
+        exit(1);
+    }
+}
+
+void handleroutput(int signo)
+{ 
+    if ( tcsetpgrp(1, getpid()) == -1) { // brings the process id into the foregorund
+        perror("tcsetpgrp");
+        exit(1);
+    }
+}
+
+void execute_fg()
+{
+    int status;
+    if(currentId==-1)  //if current id ==-1 then no process is in the background
+    {
+        printf("no background process to bring to foreground\n");
+        return;
+    }
+    printf("bringing process id - %d into foreground\n",backgroundprocessIds[currentId]);
+    if (tcsetpgrp(0, backgroundprocessIds[currentId]) == -1) { // brings the process id into the foregorund
+        perror("tcsetpgrp"); 
+        exit(1);
+    }
+
+    // Wait for the foreground process to complete
+    waitpid(backgroundprocessIds[currentId--], &status, WUNTRACED);  //wait for the child to execute
+}
+
+int checkreversearrow(char *a)
+{
+    int i = 0;
+
+    // Skip leading spaces
+    while (a[i] == ' ') {
+        i++;
+    }
+
+    // Check if the first non-space character is <
+    if (a[i] == '<') {
+        return 0;
+    } else {
+        return 1;
+    }
+}
+
+int main()
+{
+    char a[100];
+    char *token;
+    signal(SIGTTIN , handlerinput); //handler for  SIGTTIN
+    signal(SIGTTOU , handleroutput); //handler for  SIGTTOU
+    root_dir=getenv("HOME");  // stores the home directory into root_dir
+    while(1)
+    {
+        printf("shell24$ "); // prints shell24$
+        fgets(a,sizeof(a),stdin); //takes the input
+        
+        size_t len = strlen(a);
+        if (len > 0 && a[len - 1] == '\n') // if input contains new line at the end .. it will replaced by null
+            a[len - 1] = '\0';
+
+        if(strstr(a,"newt")!=NULL)  // if the input is newt 
+        {
+            execute_newt(a); 
+        }
+        else if(strstr(a,"fg")!=NULL) //if the input is fg
+        {
+            execute_fg();
+            
+        }
+        else if(strstr(a,"&&")!=NULL  || strstr(a,"||")!=NULL)  //if the input contains && or ||
+        {
+            //printf("start onlyspace = %d \n",onlyspace);
+            maxNumberOfCommands=6;
+            expectedNumberOfCommands=count_and_and(a)+1;
+            tokenize_double_and(a,"&&");  //tokenize the command and store it in the array
+            if(checkerrorincommands() == 1)  //checks the errors in the command
+            {
+                continue;
+            }
+            else
+            {
+                execute_conditions(); //execute the function
+            }
+            
+        }
+        else if(strstr(a,"|")!=NULL)
+        {
+            maxNumberOfCommands=7;
+            expectedNumberOfCommands=count_characters(a,'|')+1;
+            tokenizecommands(a,"|"); //tokenize the command and store it in the array
+            if(checkerrorincommands() == 1) //checks the errors in the command
+            {
+                continue;
+            }
+            else
+            {
+                execute_all_commands(); //execute the function
+            }        
+        }
+        else if(a[strlen(a)-1]=='&')
+        {
+            execute_background(a); //execute the function
+        }
+        else if(strstr(a,"#")!=NULL)
+        {
+            maxNumberOfCommands=6;
+            expectedNumberOfCommands=count_characters(a,'#')+1;
+            tokenizecommands(a,"#");  //tokenize the command and store it in the array
+            if(checkerrorincommands() == 1) //checks the errors in the command
+            {
+                continue;
+            }
+            else
+            {
+                execute_concat(); //execute the function
+            }
+        }
+        else if(strstr(a,">>")!=NULL)
+        {
+            tokenizecommands(a,">>"); //tokenize the command and store it in the array
+            doubleArrow=1;
+            execute_arrows(); //execute the function
+        }
+        else if(strstr(a,">")!=NULL)
+        {
+            tokenizecommands(a,">"); //tokenize the command and store it in the array
+            doubleArrow=0;
+            execute_arrows(); //execute the function
+        }
+        else if(strstr(a,"<")!=NULL)
+        {
+ 
+            if(checkreversearrow(a)==0) //checks for any errors in the command
+            {
+                printf("error in command\n");
+                continue;
+            }
+          
+            tokenizecommands(a,"<"); //tokenize the command and store it in the array
+            execute_reversearrow(); //execute the function
+        }
+        else if(strstr(a,";")!=NULL)
+        {
+            maxNumberOfCommands=6;
+            expectedNumberOfCommands=count_characters(a,';')+1;
+            tokenizecommands(a,";");  //tokenize the command and store it in the array
+            if(checkerrorincommands() == 1) //checks the errors in the command
+            {
+                continue;
+            }
+            else
+            {
+                execute_sequential(); //execute the function
+            }
+        }
+        else
+        {
+            storecommand(a,0);  //stores the command
+            numberOfCommands=0; 
+            expectedNumberOfCommands=0;
+            maxNumberOfCommands=1; 
+            if(checkerrorincommands() == 1)  //checks the errors in the command
+            {
+                continue; //if command contains error then skips next steps
+            }
+            else
+            {
+                if(fork()==0)
+                {
+                    execute_single_command(0); //execute the function
+                } 
+                else
+                {
+                    wait(NULL);  //wait the child id to complete
+                }
+            }
+            
+        }
+
+
+    }
 }
